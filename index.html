@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>租事大吉</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 h-screen overflow-hidden font-sans">
+
+  <div class="flex h-full">
+    
+    <div class="w-80 bg-white border-r border-gray-200 p-6 flex flex-col justify-between shadow-md">
+      <div>
+        <h1 class="text-2xl font-bold text-teal-600 mb-2 flex items-center">
+          租事大吉 <span class="text-xl ml-2">🛡️</span>
+        </h1>
+        <p class="text-xs text-gray-500 mb-6">租屋契約 AI 審閱助手</p>
+        
+        <div class="mb-4 p-3 bg-teal-50 border border-teal-200 rounded-lg">
+          <p class="text-xs text-teal-800 font-semibold flex items-center">
+            <span class="inline-block w-2 h-2 rounded-full bg-teal-500 mr-2 animate-pulse"></span>
+            AI 智能審閱系統
+          </p>
+          <p class="text-[11px] text-gray-500 mt-1 leading-relaxed">
+            透過 AI 快速掃描合約條款，為您即時分析潛在的法律風險與權益事項，讓您安心租屋。
+          </p>
+        </div>
+      </div>
+      
+      <div class="text-center text-xs text-gray-400 border-t border-gray-100 pt-4">
+        © 2026 租事大吉 LawTech
+      </div>
+    </div>
+
+    <div class="flex-1 p-6 flex flex-col bg-gray-50">
+      <h2 class="text-lg font-semibold text-gray-800 mb-3 flex items-center">
+        <span class="mr-2">📄</span> 貼上合約文字
+      </h2>
+      <textarea id="contractText" placeholder="請將租屋合約條文複製貼上到這裡...&#10;（例如：禁止申報租金抵稅、電費每度12元、所有修繕由房客負責...）" class="flex-1 w-full p-4 border border-gray-300 rounded-xl shadow-inner resize-none focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-base leading-relaxed bg-white"></textarea>
+    </div>
+
+    <div class="w-96 bg-white border-l border-gray-200 p-6 flex flex-col shadow-md">
+      <h2 class="text-lg font-semibold text-gray-800 mb-3 flex items-center">
+        <span class="mr-2">🤖</span> AI 審閱報告
+      </h2>
+      
+      <button id="submitBtn" onclick="analyzeContract()" class="w-full bg-teal-600 hover:bg-teal-700 text-white font-medium py-3.5 px-4 rounded-xl transition duration-200 shadow-md active:scale-[0.98] mb-4 text-center">
+        開始線上審閱
+      </button>
+      
+      <div id="channelBadge" class="hidden mb-4 p-2 bg-amber-100 border border-amber-300 text-amber-800 text-[11px] rounded-lg text-center">
+        ⚠️ 系統已自動切換至備用處理線路
+      </div>
+
+      <div id="reportContainer" class="flex-1 overflow-y-auto space-y-4 pr-1">
+        <p id="placeholderText" class="text-sm text-gray-400 text-center mt-10">請在中間貼上合約內容<br>並點擊上方按鈕開始分析</p>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // ⚠️ 【重要】請把這裡換成你從 Cloudflare 產出的專屬 Worker 網址 ⚠️
+    const WORKER_URL = "你的_WORKER_網址";
+
+    // 系統概述文件提及之去識別化機制 (Regex 實作遮蔽個人隱私)
+    function anonymize(text) {
+      let processed = text;
+      processed = processed.replace(/[A-Z][12]\d{8}/g, '[身分證字號已遮蔽]');
+      processed = processed.replace(/09\d{8}/g, '[電話已遮蔽]');
+      return processed;
+    }
+
+    async function analyzeContract() {
+      const contractText = document.getElementById('contractText').value.trim();
+      const submitBtn = document.getElementById('submitBtn');
+      const reportContainer = document.getElementById('reportContainer');
+      const channelBadge = document.getElementById('channelBadge');
+
+      if (!contractText) return alert('請先貼上合約文字！');
+      if (WORKER_URL.includes("你的_WORKER_網址")) return alert('請先在程式碼中填入你的 Cloudflare Worker 網址！');
+
+      // 按鈕切換為加載狀態（防止重複點擊）
+      submitBtn.disabled = true;
+      submitBtn.innerText = 'AI 正在極速審閱中...';
+      submitBtn.className = 'w-full bg-gray-400 text-white font-medium py-3.5 px-4 rounded-xl cursor-not-allowed mb-4 text-center';
+      reportContainer.innerHTML = `
+        <div class="text-center mt-10">
+          <div class="inline-block w-8 h-8 border-4 border-teal-500 border-t-transparent rounded-full animate-spin mb-3"></div>
+          <p class="text-sm text-gray-500 animate-pulse">正在進行去識別化並比對定型化契約法規...</p>
+        </div>`;
+      channelBadge.classList.add('hidden');
+
+      // 執行去識別化
+      const cleanText = anonymize(contractText);
+      
+      // 建構發送給後端 AI 的 Prompt 提示詞
+      const prompt = `你是一位精通台灣租賃法律的專家。請審閱以下租屋合約文字，逐條比對《住宅租賃定型化契約應記載及不得記載事項》與民法。
+請找出是否存在違法限制、不平等或灰色條款，並依以下三種風險分類：
+1. "紅色"：明確違反法律強制規定（如：限制報戶籍、限制申報租金抵稅、電費超額等）。
+2. "黃色"：條文合法，但對房客極端不利（如：修繕責任完全轉嫁房客）。
+3. "藍色"：重要權益提醒（如：提前通知期限）。
+
+請完全使用繁體中文回答，並且【只能】回傳一個標準的 JSON 陣列，不要包含任何 markdown 標記（如 \`\`\`json）或任何額外的前後文文字。
+格式範例：
+[
+  { "type": "紅色", "title": "限制申報租金抵稅", "reason": "合約約定禁止報稅，已明確違反法律，該條款無效。" }
+]
+
+待審閱合約內容：
+${cleanText}`;
+
+      try {
+        const response = await fetch(WORKER_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: prompt })
+        });
+        
+        const data = await response.json();
+        
+        if (data.error) throw new Error(data.message);
+
+        // 如果後端告知啟用了備用線路，在前台顯示提示
+        if (data.backup_active) {
+          channelBadge.classList.remove('hidden');
+        } else {
+          channelBadge.classList.add('hidden');
+        }
+
+        let aiText = data.candidates[0].content.parts[0].text.trim();
+        let reportList = [];
+
+        // 🚀 【第一重防禦】：嘗試尋找並精準抓取符合標準 JSON 陣列 [ ... ] 的區塊
+        const jsonMatch = aiText.match(/\[\s*\{[\s\S]*\}\s*\]/);
+
+        if (jsonMatch) {
+          try {
+            reportList = JSON.parse(jsonMatch[0]);
+          } catch (e) {
+            console.error("JSON 區塊解析失敗，切換至文字解析模式", e);
+          }
+        } 
+        
+        // 🚀 【第二重防禦（關鍵修正）】：如果 AI 脫稿演出吐了純文字，啟動「白話文字智慧解構器」
+        if (!reportList || reportList.length === 0) {
+          let cleanLines = aiText.replace(/```json|```|\[|\]/g, "").split('\n');
+          let currentItem = null;
+
+          cleanLines.forEach(line => {
+            line = line.trim();
+            if (!line) return;
+
+            // 根據中文字關鍵字判定風險並切分卡片
+            if (line.includes("紅色") || line.includes("違法") || line.includes("不合法") || line.startsWith("1.")) {
+              if (currentItem) reportList.push(currentItem);
+              currentItem = { type: "紅色", title: "偵測到違法疑慮條款", reason: line };
+            } else if (line.includes("黃色") || line.includes("不平等") || line.includes("對房客不利") || line.startsWith("2.")) {
+              if (currentItem) reportList.push(currentItem);
+              currentItem = { type: "黃色", title: "偵測到不平等條款", reason: line };
+            } else if (line.includes("藍色") || line.includes("提醒") || line.includes("注意事項") || line.startsWith("3.")) {
+              if (currentItem) reportList.push(currentItem);
+              currentItem = { type: "藍色", title: "權益重點提示", reason: line };
+            } else {
+              // 延續說明文字
+              if (currentItem) {
+                currentItem.reason += " " + line;
+              } else if (reportList.length === 0) {
+                currentItem = { type: "藍色", title: "合約重點分析", reason: line };
+              }
+            }
+          });
+          if (currentItem) reportList.push(currentItem);
+        }
+
+        // 清空容器，準備渲染卡片
+        reportContainer.innerHTML = '';
+
+        // 如果真的完全沒有任何問題
+        if (!reportList || reportList.length === 0) {
+          reportContainer.innerHTML = `<p class="text-sm text-gray-400 text-center mt-10">未偵測到明顯違法條款！</p>`;
+        }
+
+        // 渲染視覺化紅、黃、藍卡片
+        reportList.forEach(item => {
+          let cardColor = 'bg-blue-50 border-blue-200 text-blue-900';
+          let badgeColor = 'bg-blue-200 text-blue-800';
+          if (item.type === '紅色') { cardColor = 'bg-red-50 border-red-200 text-red-900'; badgeColor = 'bg-red-200 text-red-800'; }
+          else if (item.type === '黃色') { cardColor = 'bg-yellow-50 border-yellow-200 text-yellow-900'; badgeColor = 'bg-yellow-200 text-yellow-800'; }
+
+          // 清理文字中殘留可能影響視覺的 JSON 符號
+          let displayTitle = item.title ? item.title.replace(/[\"\'\{\}\[\]:]/g, "").trim() : "條款分析";
+          let displayReason = item.reason ? item.reason.replace(/[\"\'\{\}\[\]]/g, "").trim() : "";
+
+          reportContainer.innerHTML += `
+            <div class="${cardColor} p-4 rounded-xl border shadow-sm transition-all duration-300 hover:shadow-md">
+              <div class="flex items-center mb-1">
+                <span class="${badgeColor} text-[10px] font-extrabold px-2 py-0.5 rounded-full mr-2">${item.type}</span>
+                <h4 class="font-bold text-gray-800 text-sm">${displayTitle}</h4>
+              </div>
+              <p class="text-xs text-gray-600 leading-relaxed mt-2 whitespace-pre-wrap">${displayReason}</p>
+            </div>`;
+        });
+
+      } catch (error) {
+        console.error(error);
+        reportContainer.innerHTML = `
+          <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-xl text-xs shadow-sm">
+            <p class="font-bold flex items-center">⚠️ 系統連線異常提示：</p>
+            <p class="mt-2 bg-white p-2 rounded-lg text-red-900 font-mono border border-red-200 overflow-x-auto whitespace-pre-wrap">${error.message}</p>
+          </div>`;
+      } finally {
+        // 恢復按鈕狀態
+        submitBtn.disabled = false;
+        submitBtn.innerText = '開始線上審閱';
+        submitBtn.className = 'w-full bg-teal-600 hover:bg-teal-700 text-white font-medium py-3.5 px-4 rounded-xl transition duration-200 shadow-md active:scale-[0.98] mb-4 text-center';
+      }
+    }
+  </script>
+</body>
+</html>
